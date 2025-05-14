@@ -1,0 +1,8 @@
+model_path: "gs://your-bucket/models/example_model"
+data_source: "gs://your-bucket/data/example_data.csv"
+batch_size: 32
+learning_rate: 0.001
+num_epochs: 10
+validation_split: 0.2
+project_id: "your-gcp-project-id"
+vertex_ai_endpoint: "projects/your-gcp-project-id/locations/us-central1/endpoints/your-endpoint-id"
