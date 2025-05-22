@@ -18,7 +18,7 @@ import time
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 import joblib
-from google.cloud import storage
+from google.cloud import storage, aiplatform
 import os
 import shutil
 
@@ -28,6 +28,14 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
+def ensure_experiment_exists(experiment_name, project, location):
+    aiplatform.init(project=project, location=location)
+    try:
+        aiplatform.Experiment(experiment_name)
+    except Exception as e:
+        # If not found, create it
+        aiplatform.Experiment.create(experiment_name)
+        
 def load_data(data_source: str) -> Any:
     """
     Load data from the specified source.
@@ -153,19 +161,13 @@ def log_experiment_metrics(
     Args:
         experiment_name (str): Name of the experiment.
         run_name (str): Name of the run.
-        metrics (Dict[str, float): Metrics to log.
+        metrics (Dict[str, float]): Metrics to log.
         params (Dict[str, Any]): Parameters to log.
     """
-    aiplatform.init(project=params["project_id"], location=params["region"])
-    experiment = aiplatform.Experiment(experiment_name)
-    experiment_run = experiment.run(run_name=run_name)
-
-    # Log metrics
-    experiment_run.log_metrics(metrics)
-
-    # Log parameters
-    experiment_run.log_params(params)
-
+    aiplatform.init(project=params["project_id"], location=params["region"], experiment=experiment_name)
+    with aiplatform.start_run(run=run_name) as run:
+        run.log_metrics(metrics)
+        run.log_params(params)
     logging.info(f"Logged metrics and parameters to Vertex AI Experiment: {experiment_name}/{run_name}")
 def deploy_model_with_retry(endpoint, model, cfg, max_attempts=10, delay=30):
     for attempt in range(max_attempts):
@@ -262,7 +264,7 @@ def compare_models(vertex_model, existing_model_name_from_config, validation_dat
             # Ensure aiplatform is initialized if not done globally for this specific call context
             aiplatform.init(project=cfg.get("project_id"), location=cfg.get("region"))
             existing_vertex_model_resource = aiplatform.Model(existing_model_name_from_config)
-            existing_model_artifact_uri = existing_vertex_model_resource.artifact_uri
+            existing_model_artifact_uri = existing_vertex_model_resource.uri
             
             if not existing_model_artifact_uri:
                 raise ValueError(f"Artifact URI not found for existing model: {existing_model_name_from_config}")
@@ -303,12 +305,40 @@ def main(config_path: str):
         if k not in cfg:
             raise KeyError(f"Missing '{k}' in config")
 
+    # Ensure Vertex AI Experiment exists before logging metrics
+    ensure_experiment_exists(
+        experiment_name="cat-tastrophe-model-comparison",
+        project=cfg["project_id"],
+        location=cfg["region"]
+    )
+
     # Train & push new model
     trainer = ExampleTrainingComponent(cfg)
     model_uri = trainer.execute()
     if not model_uri:
         raise RuntimeError("Training failed, no artifact URI returned")
-
+    else:
+        logging.info(f"Model artifact URI: {model_uri}")
+        # register model to Vertex AI
+        vertex_model = trainer.register_model_to_vertex_ai(model_artifact_uri=model_uri
+                                                           , display_name=cfg["model_display_name"]
+                                                           , description=cfg.get("model_description", "")
+                                                           , serving_container_image_uri=cfg["serving_container_image_uri"]
+                                                           , labels=cfg["labels"]
+        )
+        #     project_id=cfg["project_id"],
+        #     region=cfg["region"],
+        #     model_display_name=cfg["model_display_name"],
+        #     serving_container_image_uri=cfg["serving_container_image_uri"],
+        #     model_artifact_uri=model_uri,
+        #     model_description=cfg.get("model_description", ""),
+        #     labels={
+        #         "team": "astronomy",
+        #         "version": "v0_1",
+        #         # Add accuracy as a label
+        #     },
+        # )
+    
     # Load data
     data = load_data(cfg["data_source"])
 
@@ -323,7 +353,7 @@ def main(config_path: str):
     if processed_data is None:
         logging.error("Skipping model training due to invalid processed data.")
         return
-
+    """
     # Train model
     model = train_model(processed_data, cfg['training_params'])
     if model is None:
@@ -345,7 +375,7 @@ def main(config_path: str):
             # Add accuracy as a label
         },
     )
-
+    """
     # Load the existing endpoint
     endpoint = aiplatform.Endpoint(endpoint_name=cfg["vertex_ai_endpoint"])
 
@@ -371,6 +401,11 @@ def main(config_path: str):
                     logging.info("Existing model performs better than new model.")
             else:
                 logging.warning("Could not retrieve accuracy for one or both models.")
+            
+            # Log metrics comparison to Vertex AI Experiment
+            log_model_comparison_to_vertex_ai_experiment(
+                vertex_model, new_model_metrics, existing_model_metrics, cfg
+            )
         else:
             logging.warning("Skipping model comparison due to missing metrics.")
     else:
@@ -385,6 +420,46 @@ def main(config_path: str):
     #    machine_type="n1-standard-2",  # Or your desired machine type
     #)
     #logging.info(f"Model deployed to endpoint: {endpoint.name}")
+
+def log_model_comparison_to_vertex_ai_experiment(
+    vertex_model, new_model_metrics, existing_model_metrics, cfg
+):
+    """
+    Log new and existing model metrics to Vertex AI Experiments for comparison.
+    """
+    experiment_name = "cat-tastrophe-model-comparison"  # <-- fixed name
+
+    # Log new model metrics
+    if new_model_metrics:
+        log_experiment_metrics(
+            experiment_name=experiment_name,
+            run_name=f"new-model-{vertex_model.version_id}",
+            metrics=new_model_metrics,
+            params={
+                "project_id": cfg["project_id"],
+                "region": cfg["region"],
+                "model_version": vertex_model.version_id,
+                "model_type": cfg["training_params"]["model_type"],
+                "run_type": "new"
+            }
+        )
+
+    # Log existing model metrics
+    if existing_model_metrics and cfg.get("existing_model_name"):
+        existing_model_id = cfg["existing_model_name"].split("/")[-1]
+        log_experiment_metrics(
+            experiment_name=experiment_name,
+            run_name=f"existing-model-{existing_model_id}",
+            metrics=existing_model_metrics,
+            params={
+                "project_id": cfg["project_id"],
+                "region": cfg["region"],
+                "model_version": existing_model_id,
+                "model_type": "unknown",
+                "run_type": "existing"
+            }
+        )
+    logging.info(f"Logged model comparison to Vertex AI Experiment: {experiment_name}")
 
 if __name__ == "__main__":
     import sys as _sys
@@ -412,5 +487,11 @@ def run_pipeline(config: Dict[str, Any]) -> None:
     
     # Deploy model
     deploy_model(model, config['deployment_params'])
+
+
+
+
+
+
 
 

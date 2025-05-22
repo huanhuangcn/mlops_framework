@@ -1,12 +1,13 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 import joblib
 from google.cloud import storage
+from google.cloud import aiplatform
 import logging
 import os
 import time
@@ -70,54 +71,23 @@ class ExampleTrainingComponent:
         return df
 
     def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        logger.info("Processing data...")
+        logger.info("Processing data (convert categorical to numerical)...")
         if df.empty:
             logger.warning("Empty DataFrame, skipping processing.")
             return df
 
-        tp = self.config.get('training_params', {})
-        target = tp.get('target_column', 'target')
-        features = tp.get('feature_columns') or [c for c in df.columns if c != target]
+        # Remove timestamp column if present
+        if "timestamp" in df.columns:
+            df = df.drop(columns=["timestamp"])
 
-        logger.info(f"Target: {target}, Features: {features}")
-        if target not in df.columns or not features:
-            raise ValueError("Invalid target or features.")
+        # Convert all object/category columns to numerical using LabelEncoder
+        for col in df.select_dtypes(include=['object', 'category']).columns:
+            le = LabelEncoder()
+            df[col] = le.fit_transform(df[col].astype(str))
+            logger.info(f"Encoded column '{col}' with LabelEncoder.")
 
-        num_feats = df[features].select_dtypes(include=['int64', 'float64']).columns.tolist()
-        cat_feats = df[features].select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
-        logger.info(f"Numerical: {num_feats}, Categorical: {cat_feats}")
-
-        num_pipe = Pipeline([
-            ('imputer', SimpleImputer(strategy='mean')),
-            ('scale', StandardScaler())
-        ])
-        cat_pipe = Pipeline([
-            ('imputer', SimpleImputer(strategy='most_frequent')),
-            ('ohe', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-        ])
-        preproc = ColumnTransformer([
-            ('num', num_pipe, num_feats),
-            ('cat', cat_pipe, cat_feats),
-        ], remainder='drop')
-
-        X = df[features]
-        y = df[target]
-        logger.info(f"Fitting preprocessor on X shape {X.shape}")
-        X_proc = preproc.fit_transform(X)
-        logger.info(f"Transformed X shape {X_proc.shape}")
-
-        try:
-            ohe = preproc.named_transformers_['cat'].named_steps['ohe']
-            ohe_names = ohe.get_feature_names_out(cat_feats)
-            cols = num_feats + list(ohe_names)
-            X_df = pd.DataFrame(X_proc, columns=cols, index=df.index)
-        except Exception:
-            X_df = pd.DataFrame(X_proc, index=df.index)
-            logger.warning("Using default column names after transform.")
-
-        result = pd.concat([X_df, y.reset_index(drop=True)], axis=1)
-        logger.info(f"Processed DataFrame shape: {result.shape}")
-        return result
+        logger.info(f"Columns after encoding: {df.columns.tolist()}")
+        return df
 
     def train_model(self, df: pd.DataFrame) -> str:
         logger.info("Training model...")
@@ -170,6 +140,41 @@ class ExampleTrainingComponent:
         pytorch_model.linear.weight.data = torch.tensor(weights, dtype=torch.float32).reshape(1, -1)
         pytorch_model.linear.bias.data = torch.tensor(bias, dtype=torch.float32)
         return pytorch_model
+
+    def register_model_to_vertex_ai(
+        self,
+        model_artifact_uri: str,
+        display_name: str,
+        serving_container_image_uri: str,
+        description: str = "",
+        labels: dict = None,
+    ):
+        """
+        Registers the trained model artifact to Vertex AI Model Registry.
+
+        Args:
+            model_artifact_uri (str): GCS URI to the model directory (should end with '/').
+            display_name (str): Display name for the model in Vertex AI.
+            serving_container_image_uri (str): URI of the serving container image.
+            description (str): Model description.
+            labels (dict): Optional labels for the model.
+        Returns:
+            aiplatform.Model: The registered Vertex AI model object.
+        """
+        project_id = self.config["project_id"]
+        region = self.config["region"]
+
+        aiplatform.init(project=project_id, location=region)
+        model = aiplatform.Model.upload(
+            display_name=display_name,
+            artifact_uri=model_artifact_uri,
+            serving_container_image_uri=serving_container_image_uri,
+            description=description,
+            labels=labels or {},
+            sync=True,
+        )
+        logging.info(f"Registered model to Vertex AI: {model.resource_name}")
+        return model
 
     def execute(self) -> str:
         logger.info("Executing ExampleTrainingComponent...")
