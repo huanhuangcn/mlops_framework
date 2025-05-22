@@ -1,8 +1,28 @@
 model_path: "gs://your-bucket/models/example_model"
-data_source: "gs://your-bucket/data/example_data.csv"
+data_source: "gs://mlops-459809-dev-data-mlops/data/cosmic_cat_data.csv"
 batch_size: 32
 learning_rate: 0.001
 num_epochs: 10
 validation_split: 0.2
-project_id: "your-gcp-project-id"
-vertex_ai_endpoint: "projects/your-gcp-project-id/locations/us-central1/endpoints/your-endpoint-id"
+project_id: "mlops-459809"
+region: "europe-west2" # Added region for Vertex AI resources
+model_display_name: "CosmicCatTastropheForecaster" # Name to display in Vertex AI Model Registry
+model_description: "Predicts the probability of feline interference during astronomical observations." # Description for Vertex AI Model Registry
+vertex_ai_endpoint: "projects/mlops-459809/locations/europe-west2/endpoints/8756734903980130304"
+existing_model_name: "projects/mlops-459809/locations/europe-west2/models/4040120291890823168" # Replace with your existing model name
+serving_container_image_uri: "us-docker.pkg.dev/vertex-ai/prediction/pytorch-cpu.1-10:latest"
+labels:
+  team: astronomy
+  version: v0_1    # replaced the dot with underscore
+
+# prefix (must start with gs://) into which your component will write the model
+model_gcs_path_prefix: "gs://mlops-459809-dev-data-mlops/models/CosmicCatTastropheForecaster/"
+
+training_params:
+  validation_split: 0.2
+  target_column: "interference_occurred"
+  model_type: "random_forest"  # Change to "logistic_regression" or "random_forest"
+  hyperparameters:
+    n_estimators: 100
+    max_depth: 10
+    random_state: 42
