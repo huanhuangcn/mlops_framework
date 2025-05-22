@@ -9,7 +9,7 @@ region: "europe-west2" # Added region for Vertex AI resources
 model_display_name: "CosmicCatTastropheForecaster" # Name to display in Vertex AI Model Registry
 model_description: "Predicts the probability of feline interference during astronomical observations." # Description for Vertex AI Model Registry
 vertex_ai_endpoint: "projects/mlops-459809/locations/europe-west2/endpoints/8756734903980130304"
-existing_model_name: "projects/mlops-459809/locations/europe-west2/models/4040120291890823168" # Replace with your existing model name
+existing_model_name: "projects/mlops-459809/locations/europe-west2/models/1024397391412854784" # Replace with your existing model name
 serving_container_image_uri: "us-docker.pkg.dev/vertex-ai/prediction/pytorch-cpu.1-10:latest"
 labels:
   team: astronomy

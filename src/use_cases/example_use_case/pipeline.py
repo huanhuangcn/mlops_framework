@@ -21,6 +21,7 @@ import joblib
 from google.cloud import storage, aiplatform
 import os
 import shutil
+import datetime
 
 # --- Logger Setup ---
 logging.basicConfig(
@@ -424,16 +425,15 @@ def main(config_path: str):
 def log_model_comparison_to_vertex_ai_experiment(
     vertex_model, new_model_metrics, existing_model_metrics, cfg
 ):
-    """
-    Log new and existing model metrics to Vertex AI Experiments for comparison.
-    """
-    experiment_name = "cat-tastrophe-model-comparison"  # <-- fixed name
+    experiment_name = "cat-tastrophe-model-comparison"
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 
     # Log new model metrics
     if new_model_metrics:
+        run_name = f"new-model-{vertex_model.version_id}-{timestamp}"
         log_experiment_metrics(
             experiment_name=experiment_name,
-            run_name=f"new-model-{vertex_model.version_id}",
+            run_name=run_name,
             metrics=new_model_metrics,
             params={
                 "project_id": cfg["project_id"],
@@ -447,9 +447,10 @@ def log_model_comparison_to_vertex_ai_experiment(
     # Log existing model metrics
     if existing_model_metrics and cfg.get("existing_model_name"):
         existing_model_id = cfg["existing_model_name"].split("/")[-1]
+        run_name = f"existing-model-{existing_model_id}-{timestamp}"
         log_experiment_metrics(
             experiment_name=experiment_name,
-            run_name=f"existing-model-{existing_model_id}",
+            run_name=run_name,
             metrics=existing_model_metrics,
             params={
                 "project_id": cfg["project_id"],
