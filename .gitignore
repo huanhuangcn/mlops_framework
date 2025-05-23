@@ -22,7 +22,7 @@ build/
 .ipynb_checkpoints
 
 # VS Code settings
-.vscode/
+#.vscode/
 .history/
 
 # MacOS
