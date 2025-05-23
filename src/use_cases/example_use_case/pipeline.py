@@ -292,136 +292,79 @@ def compare_models(vertex_model, existing_model_name_from_config, validation_dat
     return new_model_metrics, existing_model_metrics
 
 def main(config_path: str):
+    """
+    Main entry for the MLOps pipeline PoC.
+
+    Steps:
+    1. Load pipeline configuration from YAML.
+    2. Ensure the Vertex AI experiment exists (for tracking runs).
+    3. Train a new model and register it to Vertex AI Model Registry.
+    4. Prepare and process the input data.
+    5. Compare the new model with an existing model (if provided in config).
+    6. Log the comparison results to Vertex AI Experiments.
+    """
+    # 1. Load configuration
+    cfg = load_config(config_path)
+    # 2. Ensure experiment exists for tracking
+    ensure_experiment_exists_for_cfg(cfg)
+    # 3. Train and register model
+    model_uri, vertex_model = train_and_register(cfg)
+    # 4. Prepare and process data
+    processed_data = prepare_data(cfg)
+    # 5. Compare new model with existing model (if any)
+    new_metrics, existing_metrics = compare_with_existing(vertex_model, processed_data, cfg)
+    # 6. Log comparison results
+    log_comparison(vertex_model, new_metrics, existing_metrics, cfg)
+    # Optionally: deploy_model_to_endpoint(vertex_model, cfg)
+
+# --- Helper functions for clarity ---
+
+def load_config(config_path):
     logging.info(f"Loading config from {config_path}")
     with open(config_path) as f:
-        cfg = yaml.safe_load(f)
+        return yaml.safe_load(f)
 
-    # Validate required keys...
-    required = [
-        "data_source", "project_id", "region", "model_gcs_path_prefix",
-        "training_params", "model_display_name", "model_description",
-        "serving_container_image_uri", "labels", "vertex_ai_endpoint"
-    ]
-    for k in required:
-        if k not in cfg:
-            raise KeyError(f"Missing '{k}' in config")
-
-    # Ensure Vertex AI Experiment exists before logging metrics
+def ensure_experiment_exists_for_cfg(cfg):
     ensure_experiment_exists(
         experiment_name="cat-tastrophe-model-comparison",
         project=cfg["project_id"],
         location=cfg["region"]
     )
 
-    # Train & push new model
+def train_and_register(cfg):
     trainer = ExampleTrainingComponent(cfg)
     model_uri = trainer.execute()
     if not model_uri:
         raise RuntimeError("Training failed, no artifact URI returned")
-    else:
-        logging.info(f"Model artifact URI: {model_uri}")
-        # register model to Vertex AI
-        vertex_model = trainer.register_model_to_vertex_ai(model_artifact_uri=model_uri
-                                                           , display_name=cfg["model_display_name"]
-                                                           , description=cfg.get("model_description", "")
-                                                           , serving_container_image_uri=cfg["serving_container_image_uri"]
-                                                           , labels=cfg["labels"]
-        )
-        #     project_id=cfg["project_id"],
-        #     region=cfg["region"],
-        #     model_display_name=cfg["model_display_name"],
-        #     serving_container_image_uri=cfg["serving_container_image_uri"],
-        #     model_artifact_uri=model_uri,
-        #     model_description=cfg.get("model_description", ""),
-        #     labels={
-        #         "team": "astronomy",
-        #         "version": "v0_1",
-        #         # Add accuracy as a label
-        #     },
-        # )
-    
-    # Load data
-    data = load_data(cfg["data_source"])
-
-    # Validate data
-    validated_data = validate_data(data)
-    if validated_data is None:
-        logging.error("Skipping model training due to invalid validated data.")
-        return
-
-    # Process data
-    processed_data = process_data(validated_data)
-    if processed_data is None:
-        logging.error("Skipping model training due to invalid processed data.")
-        return
-    """
-    # Train model
-    model = train_model(processed_data, cfg['training_params'])
-    if model is None:
-        logging.error("Skipping model registration and comparison due to failed model training.")
-        return
-
-    # Register new model
-    logging.info("Registering new model to Vertex AI")
-    vertex_model = register_model_to_vertex_ai(
-        project_id=cfg["project_id"],
-        region=cfg["region"],
-        model_display_name=cfg["model_display_name"],
-        serving_container_image_uri=cfg["serving_container_image_uri"],
+    vertex_model = trainer.register_model_to_vertex_ai(
         model_artifact_uri=model_uri,
-        model_description=cfg.get("model_description", ""),
-        labels={
-            "team": "astronomy",
-            "version": "v0_1",
-            # Add accuracy as a label
-        },
+        display_name=cfg["model_display_name"],
+        description=cfg.get("model_description", ""),
+        serving_container_image_uri=cfg["serving_container_image_uri"],
+        labels=cfg["labels"]
     )
-    """
-    # Load the existing endpoint
-    endpoint = aiplatform.Endpoint(endpoint_name=cfg["vertex_ai_endpoint"])
+    return model_uri, vertex_model
 
-    # Compare with existing model
-    validation_data = load_data(cfg["data_source"])
-    if validation_data is not None:
-        X_val = processed_data.drop(columns=[cfg['training_params']['target_column']])
-        y_val = processed_data[cfg['training_params']['target_column']]
-        validation_data = (X_val, y_val)
-        new_model_metrics, existing_model_metrics = compare_models(vertex_model, cfg.get("existing_model_name"), validation_data, cfg)
+def prepare_data(cfg):
+    data = load_data(cfg["data_source"])
+    validated = validate_data(data)
+    if validated is None:
+        raise RuntimeError("Invalid validated data.")
+    processed = process_data(validated)
+    if processed is None:
+        raise RuntimeError("Invalid processed data.")
+    return processed
 
-        if new_model_metrics and existing_model_metrics:
-            new_accuracy = new_model_metrics.get("accuracy", None)
-            existing_accuracy = existing_model_metrics.get("accuracy", None)
+def compare_with_existing(vertex_model, processed_data, cfg):
+    X_val = processed_data.drop(columns=[cfg['training_params']['target_column']])
+    y_val = processed_data[cfg['training_params']['target_column']]
+    return compare_models(vertex_model, cfg.get("existing_model_name"), (X_val, y_val), cfg)
 
-            if new_accuracy is not None and existing_accuracy is not None:
-                logging.info(f"New model accuracy: {new_accuracy}")
-                logging.info(f"Existing model accuracy: {existing_accuracy}")
-
-                if new_accuracy > existing_accuracy:
-                    logging.info("New model performs better than existing model.")
-                else:
-                    logging.info("Existing model performs better than new model.")
-            else:
-                logging.warning("Could not retrieve accuracy for one or both models.")
-            
-            # Log metrics comparison to Vertex AI Experiment
-            log_model_comparison_to_vertex_ai_experiment(
-                vertex_model, new_model_metrics, existing_model_metrics, cfg
-            )
-        else:
-            logging.warning("Skipping model comparison due to missing metrics.")
-    else:
-        logging.error("Skipping model comparison due to invalid validation data.")
-        new_model_metrics = {} # Return empty metrics
-
-     # Deploy model to the endpoint
-    #traffic_split = {vertex_model.resource_name: 100}  # Send all traffic to the new model
-    #endpoint.deploy( # Remove deploy
-    #    model=vertex_model,
-    #    #traffic_split=traffic_split, # Remove traffic_split
-    #    machine_type="n1-standard-2",  # Or your desired machine type
-    #)
-    #logging.info(f"Model deployed to endpoint: {endpoint.name}")
-
+def log_comparison(vertex_model, new_metrics, existing_metrics, cfg):
+    log_model_comparison_to_vertex_ai_experiment(
+        vertex_model, new_metrics, existing_metrics, cfg
+    )
+    
 def log_model_comparison_to_vertex_ai_experiment(
     vertex_model, new_model_metrics, existing_model_metrics, cfg
 ):
@@ -463,31 +406,11 @@ def log_model_comparison_to_vertex_ai_experiment(
     logging.info(f"Logged model comparison to Vertex AI Experiment: {experiment_name}")
 
 if __name__ == "__main__":
-    import sys as _sys
-    cfg_path = _sys.argv[1] if len(_sys.argv)>1 else "config/example_use_case_config.yaml"
-    main(cfg_path)
-
-def run_pipeline(config: Dict[str, Any]) -> None:
-    """
-    Main function to run the example use case pipeline.
-    
-    Args:
-        config (Dict[str, Any]): Configuration settings for the pipeline.
-    """
-    # Load data
-    data = load_data(config['data_source'])
-    
-    # Validate data
-    validated_data = validate_data(data)
-    
-    # Process data
-    processed_data = process_data(validated_data)
-    
-    # Train model
-    model = train_model(processed_data, config['model_params'])
-    
-    # Deploy model
-    deploy_model(model, config['deployment_params'])
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python pipeline.py <config_path>")
+        sys.exit(1)
+    main(sys.argv[1])
 
 
 

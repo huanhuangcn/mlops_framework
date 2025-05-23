@@ -1,75 +1,100 @@
-# MLOps Framework
+# MLOps Framework PoC
 
-## Overview
-The MLOps Framework is designed to facilitate the lifecycle management of machine learning models using Google Cloud Platform (GCP) services, specifically Vertex AI. This framework supports multiple use cases and is built with reusability and redeployability in mind, leveraging Terraform for infrastructure as code.
+This repository demonstrates a practical MLOps pipeline using Google Vertex AI, scikit-learn, and other modern ML tools. The pipeline covers the full ML lifecycle: data loading, validation, processing, model training, registration, comparison, and experiment tracking.
+
+## Features
+
+- **Config-driven pipeline**: Easily customize runs via YAML config files.
+- **Data validation & preprocessing**: Ensures clean, ready-to-train data.
+- **Model training**: Supports scikit-learn models (RandomForest, LogisticRegression, etc.).
+- **Model registration**: Registers models to Vertex AI Model Registry.
+- **Model comparison**: Compares new and existing models using local predictions.
+- **Experiment tracking**: Logs metrics and parameters to Vertex AI Experiments.
+- **Deployment utilities**: Includes helpers for model deployment and retry logic.
+
+## Getting Started
+
+### 1. Clone the repository
+
+```sh
+git clone https://github.com/your-org/mlops_framework.git
+cd mlops_framework
+```
+
+### 2. Create and activate the conda environment
+
+```sh
+conda env create -f environment.yml
+conda activate mlops_env
+```
+
+### 3. Prepare your configuration
+
+Edit or create a YAML config file (see `example_config.yaml`) with your project, region, data source, and model parameters.
+
+### 4. Run the pipeline
+
+```sh
+python src/use_cases/example_use_case/pipeline.py /path/to/your/config.yaml
+```
 
 ## Project Structure
+
 ```
-mlops_framework
-├── src
-│   ├── use_cases
-│   │   └── example_use_case
-│   │       ├── pipeline.py          # Main logic for the example use case pipeline
-│   │       └── components.py        # Individual components for the pipeline
-│   ├── shared_components
-│   │   └── data_validation
-│   │       └── component.py         # Data validation logic for reuse
-│   └── utils
-│       └── gcp_helpers.py           # Utility functions for GCP interactions
-├── terraform
-│   ├── modules
-│   │   └── vertex_ai_endpoint
-│   │       └── main.tf              # Terraform configuration for Vertex AI endpoint
-│   ├── environments
-│   │   └── dev
-│   │       └── main.tf              # Terraform configuration for the development environment
-│   └── providers.tf                 # Terraform providers configuration
-├── config
-│   └── example_use_case_config.yaml  # Configuration settings for the example use case
-├── tests
-│   └── test_example_use_case.py      # Unit tests for the example use case
-├── requirements.txt                  # Python dependencies for the project
-└── README.md                         # Project documentation
+mlops_framework/
+├── environment.yml
+├── src/
+│   ├── use_cases/
+│   │   └── example_use_case/
+│   │       ├── pipeline.py
+│   │       └── components.py
+│   └── utils/
+│       └── vertex_model_utils.py
+└── ...
 ```
 
-## Setup Instructions
-1. **Clone the Repository**
-   ```bash
-   git clone <repository-url>
-   cd mlops_framework
-   ```
+## Key Files
 
-2. **Install Dependencies**
-   Ensure you have Python and pip installed, then run:
-   ```bash
-   pip install -r requirements.txt
-   ```
+- **pipeline.py**: Main pipeline logic and orchestration.
+- **components.py**: Training component implementation.
+- **vertex_model_utils.py**: Utilities for Vertex AI model operations.
 
-3. **Configure Terraform**
-   - Navigate to the `terraform` directory.
-   - Update the `providers.tf` file with your GCP project settings.
-   - Modify the `main.tf` files in the `modules` and `environments` directories as needed.
+## Configuration Example
 
-4. **Deploy Infrastructure**
-   Use Terraform to deploy the infrastructure:
-   ```bash
-   cd terraform/environments/dev
-   terraform init
-   terraform apply
-   ```
+```yaml
+project_id: "your-gcp-project"
+region: "us-central1"
+data_source: "data/train.csv"
+model_display_name: "cat-tastrophe-model"
+serving_container_image_uri: "gcr.io/your-project/your-serving-image"
+labels:
+  team: "ml"
+  env: "dev"
+training_params:
+  model_type: "random_forest"
+  target_column: "label"
+  hyperparameters:
+    n_estimators: 100
+    max_depth: 5
+existing_model_name: "projects/your-gcp-project/locations/us-central1/models/1234567890"
+```
 
-5. **Run the Example Use Case**
-   Execute the pipeline script:
-   ```bash
-   python src/use_cases/example_use_case/pipeline.py
-   ```
+## Tips
 
-## Usage Examples
-- To validate data, use the functions defined in `src/shared_components/data_validation/component.py`.
-- For GCP interactions, utilize the helper functions in `src/utils/gcp_helpers.py`.
+- **VS Code**: You can run and debug the pipeline directly in VS Code. Make sure to pass the config path as an argument.
+- **Google Cloud**: Ensure your environment is authenticated (`gcloud auth application-default login`) and has the necessary permissions.
+- **Extending**: Add new models, metrics, or steps by editing `components.py` and `pipeline.py`.
 
-## Contributing
-Contributions are welcome! Please submit a pull request or open an issue for any enhancements or bug fixes.
+## Troubleshooting
+
+- If you see `Usage: python pipeline.py <config_path>`, provide the path to your config file as an argument.
+- For missing dependencies, update your environment with `conda env update -f environment.yml`.
+- For Google Cloud errors, check your credentials and project/region settings.
 
 ## License
-This project is licensed under the MIT License. See the LICENSE file for more details.
+
+MIT License
+
+---
+
+*For questions or contributions, please open an issue or pull request.*
